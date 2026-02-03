@@ -1,0 +1,5 @@
+{
+  "name": "cloudflare-ai-chat-web",
+  "private": true,
+  "description": "Minimal chat UI for Cloudflare AI Chat (vanilla JS, no build)"
+}

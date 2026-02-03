@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cloudflare AI Chat</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 1rem; }
+    h1 { font-size: 1.25rem; margin-top: 0; }
+    #summary { background: #f0f4f8; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.9rem; }
+    #summary:empty { display: none; }
+    #transcript { border: 1px solid #ccc; border-radius: 6px; min-height: 200px; max-height: 360px; overflow-y: auto; padding: 0.75rem; margin-bottom: 0.75rem; }
+    .msg { margin-bottom: 0.5rem; }
+    .msg.user { color: #0a0; }
+    .msg.assistant { color: #06c; }
+    .msg .role { font-weight: 600; font-size: 0.8rem; }
+    #inputRow { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    #messageInput { flex: 1; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; }
+    #buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    button { padding: 0.5rem 0.75rem; border-radius: 4px; border: 1px solid #666; background: #fff; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    button.primary { background: #06c; color: #fff; border-color: #06c; }
+    #status { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Cloudflare AI Chat</h1>
+  <div id="summary" aria-label="Session summary"></div>
+  <div id="transcript" role="log" aria-label="Chat transcript"></div>
+  <div id="inputRow">
+    <input type="text" id="messageInput" placeholder="Type a message..." maxlength="2000" aria-label="Message" />
+    <button type="button" id="sendBtn" class="primary">Send</button>
+  </div>
+  <div id="buttons">
+    <button type="button" id="summarizeBtn">Summarize</button>
+    <button type="button" id="exportBtn">Export</button>
+    <button type="button" id="newChatBtn">New Chat</button>
+  </div>
+  <div id="status"></div>
+  <script>
+    // For local dev: Worker on :8787, frontend on another port. Override with API_BASE if needed.
+    window.API_BASE = typeof API_BASE !== 'undefined' ? API_BASE : (location.port === '8787' ? '' : (location.hostname === 'localhost' ? 'http://localhost:8787' : ''));
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>
