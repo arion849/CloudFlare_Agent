@@ -1,6 +1,6 @@
 # Cloudflare AI Chat
 
-A web chat assistant on Cloudflare Pages + Workers that uses **Workers AI** (Llama 3.1 8B) for responses and **Durable Objects (SQLite)** for per-session memory, with a dedicated summarization workflow step. Built to the [project specification](cloudflare_ai_assignment_spec.md). **$0 spend**: free tiers only.
+A web chat assistant on Cloudflare Pages + Workers that uses **Workers AI** (Llama 3.1 8B) for responses and **Durable Objects (SQLite)** for per-session memory, with a dedicated summarization workflow step. **$0 spend**: free tiers only.
 
 ## What it is
 
@@ -158,12 +158,11 @@ To avoid CORS and keep `API_BASE` empty, put the Worker in front and serve stati
     app.js               # Vanilla JS: sessionId, Send / Summarize / Export / New Chat
   package.json
 README.md
-cloudflare_ai_assignment_spec.md
 ```
 
 ## Choices and limits
 
-- **Model**: `@cf/meta/llama-3.1-8b-instruct-fp8` (free-tier friendly). The spec mentions Llama 3.3; this implementation uses the available free-tier Llama 3.1 8B.
+- **Model**: `@cf/meta/llama-3.1-8b-instruct-fp8` (free-tier friendly). This implementation uses the available free-tier Llama 3.1 8B.
 - **Rate limiting**: In-memory map of request timestamps per `sessionId`; 10 requests per 60 seconds per session. Resets when the Worker instance is recycled.
 - **Message cap**: 2,000 characters (configurable via `MESSAGE_MAX_LENGTH` in `wrangler.toml`).
 - **History**: Last 10 messages for chat context; last 50 for summarization (configurable via env vars).
