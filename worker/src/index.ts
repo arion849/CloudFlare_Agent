@@ -1,12 +1,6 @@
 /**
- * Cloudflare AI Chat Worker
- * Endpoints: POST /api/chat, POST /api/summarize, GET /api/export
- * Orchestrates ChatSessionDO + Workers AI. Rate limiting and validation.
- *
- * Test with curl (worker on http://localhost:8787):
- *   curl -X POST http://localhost:8787/api/chat -H "Content-Type: application/json" -d '{"sessionId":"mysession123","message":"Hello"}'
- *   curl -X POST http://localhost:8787/api/summarize -H "Content-Type: application/json" -d '{"sessionId":"mysession123"}'
- *   curl "http://localhost:8787/api/export?sessionId=mysession123"
+ * Worker: /api/chat, /api/summarize, /api/export, /api/upload, /api/file.
+ * Orchestrates ChatSessionDO, Workers AI, and R2.
  */
 
 import { ChatSessionDO, type MessageRow } from "./chatSessionDO";
@@ -20,6 +14,7 @@ const LLAMA_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
 export interface Env {
   CHAT_SESSION: DurableObjectNamespace;
   AI: Ai;
+  BUCKET: R2Bucket;
   MESSAGE_MAX_LENGTH?: string;
   MESSAGE_HISTORY_LIMIT?: string;
   SUMMARIZE_MESSAGE_LIMIT?: string;
@@ -33,7 +28,22 @@ const DEFAULT_SUMMARIZE_LIMIT = 50;
 const DEFAULT_RATE_REQUESTS = 10;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
 
-// In-memory per-session rate limit (request timestamps). Per-request, so simple.
+const MAX_UPLOAD_BYTES = 1024 * 1024;
+const ALLOWED_EXTENSIONS = [".txt", ".md", ".json"];
+const FILE_RESPONSE_CAP_BYTES = 100_000;
+
+function sanitizeFilename(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 200) || "file";
+}
+
+function getFileExtension(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i).toLowerCase() : "";
+}
+
 const rateLimitMap = new Map<string, number[]>();
 
 function getConfig(env: Env) {
@@ -87,7 +97,6 @@ export default {
     const config = getConfig(env);
     const corsHeaders = { "Access-Control-Allow-Origin": "*" };
 
-    // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -100,16 +109,127 @@ export default {
       });
     }
 
-    // POST /api/chat
-    if (url.pathname === "/api/chat" && request.method === "POST") {
-      let body: { sessionId?: string; message?: string };
+    if (url.pathname === "/api/upload" && request.method === "POST") {
+      let formData: FormData;
       try {
-        body = (await request.json()) as { sessionId?: string; message?: string };
+        formData = await request.formData();
+      } catch {
+        return jsonResponse(
+          { ok: false, error: { code: "bad_request", message: "Invalid multipart body" } },
+          400,
+          corsHeaders
+        );
+      }
+      const raw = formData.get("file");
+      if (!raw || typeof raw === "string") {
+        return jsonResponse(
+          { ok: false, error: { code: "validation_error", message: "Missing or invalid file field (use field name 'file')" } },
+          400,
+          corsHeaders
+        );
+      }
+      const file = raw as File;
+      const ext = getFileExtension(file.name);
+      if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        return jsonResponse(
+          { ok: false, error: { code: "validation_error", message: "Only .txt, .md, and .json files are allowed" } },
+          400,
+          corsHeaders
+        );
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        return jsonResponse(
+          { ok: false, error: { code: "validation_error", message: "File too large. Maximum size is 1 MB." } },
+          400,
+          corsHeaders
+        );
+      }
+      const fileId = crypto.randomUUID();
+      const safeName = sanitizeFilename(file.name) || "file" + ext;
+      const key = `uploads/${fileId}-${safeName}`;
+      const body = await file.arrayBuffer();
+      try {
+        await env.BUCKET.put(key, body, {
+          httpMetadata: { contentType: file.type || "text/plain" },
+          customMetadata: { originalName: file.name },
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Upload failed";
+        return jsonResponse({ ok: false, error: { code: "upload_error", message: msg } }, 500, corsHeaders);
+      }
+      return jsonResponse(
+        {
+          ok: true,
+          data: { fileId, filename: file.name, contentType: file.type || "text/plain", size: file.size },
+        },
+        200,
+        corsHeaders
+      );
+    }
+
+    if (url.pathname === "/api/file" && request.method === "GET") {
+      const fileId = url.searchParams.get("fileId")?.trim();
+      if (!fileId) {
+        return jsonResponse(
+          { ok: false, error: { code: "validation_error", message: "fileId query parameter required" } },
+          400,
+          corsHeaders
+        );
+      }
+      const list = await env.BUCKET.list({ prefix: `uploads/${fileId}-`, limit: 1 });
+      const obj = list.objects[0];
+      if (!obj) {
+        return jsonResponse(
+          { ok: false, error: { code: "not_found", message: "File not found" } },
+          404,
+          corsHeaders
+        );
+      }
+      const r2Object = await env.BUCKET.get(obj.key);
+      if (!r2Object) {
+        return jsonResponse(
+          { ok: false, error: { code: "not_found", message: "File not found" } },
+          404,
+          corsHeaders
+        );
+      }
+      const originalName = (r2Object.customMetadata?.originalName as string) || obj.key.replace(/^uploads\/[^-]+-/, "");
+      let content: string;
+      const stream = r2Object.body;
+      const cap = Math.min(r2Object.size, FILE_RESPONSE_CAP_BYTES);
+      const buf = new Uint8Array(cap);
+      let offset = 0;
+      const reader = stream.getReader();
+      try {
+        while (offset < cap) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = value.slice(0, cap - offset);
+          buf.set(chunk, offset);
+          offset += chunk.length;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      const decoder = new TextDecoder("utf-8", { fatal: false });
+      content = decoder.decode(buf.slice(0, offset));
+      return jsonResponse(
+        { ok: true, data: { fileId, filename: originalName, content } },
+        200,
+        corsHeaders
+      );
+    }
+
+    if (url.pathname === "/api/chat" && request.method === "POST") {
+      let body: { sessionId?: string; message?: string; fileId?: string };
+      try {
+        body = (await request.json()) as { sessionId?: string; message?: string; fileId?: string };
       } catch {
         return jsonResponse({ ok: false, error: { code: "bad_request", message: "Invalid JSON" } }, 400, corsHeaders);
       }
       const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
       const message = typeof body.message === "string" ? body.message.trim() : "";
+      const fileId = typeof body.fileId === "string" ? body.fileId.trim() : undefined;
       if (sessionId.length < 8) {
         return jsonResponse(
           { ok: false, error: { code: "validation_error", message: "sessionId required, min length 8" } },
@@ -138,10 +258,37 @@ export default {
         );
       }
 
+      let userContentForAI = message;
+      if (fileId) {
+        const list = await env.BUCKET.list({ prefix: `uploads/${fileId}-`, limit: 1 });
+        const obj = list.objects[0];
+        if (obj) {
+          const r2Object = await env.BUCKET.get(obj.key);
+          if (r2Object) {
+            const cap = Math.min(r2Object.size, FILE_RESPONSE_CAP_BYTES);
+            const buf = new Uint8Array(cap);
+            let offset = 0;
+            const reader = r2Object.body.getReader();
+            try {
+              while (offset < cap) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = value.slice(0, cap - offset);
+                buf.set(chunk, offset);
+                offset += chunk.length;
+              }
+            } finally {
+              reader.releaseLock();
+            }
+            const fileContent = new TextDecoder("utf-8", { fatal: false }).decode(buf.slice(0, offset));
+            userContentForAI = `[Attached file]\n${fileContent}\n\n---\n\n${message}`;
+          }
+        }
+      }
+
       const stub = getDOStub(env, sessionId);
       const ts = Date.now();
 
-      // append user message
       const appendRes = await doRequest(stub, { type: "appendMessage", role: "user", content: message, ts });
       if (!appendRes.ok) {
         return jsonResponse(
@@ -151,14 +298,14 @@ export default {
         );
       }
 
-      // get summary + recent messages
       const [summaryRes, messagesRes] = await Promise.all([
         doRequest<string | null>(stub, { type: "getSummary" }),
         doRequest<MessageRow[]>(stub, { type: "getRecentMessages", limit: config.historyLimit }),
       ]);
       if (!summaryRes.ok || !messagesRes.ok) {
+        const failed = !summaryRes.ok ? summaryRes : messagesRes;
         return jsonResponse(
-          { ok: false, error: summaryRes.ok ? messagesRes.error! : summaryRes.error! },
+          { ok: false, error: (failed as { ok: false; error: { code: string; message: string } }).error },
           500,
           corsHeaders
         );
@@ -176,7 +323,7 @@ export default {
       for (const m of recent) {
         messages.push({ role: m.role as "user" | "assistant", content: m.content });
       }
-      messages.push({ role: "user", content: message });
+      messages.push({ role: "user", content: userContentForAI });
 
       let reply: string;
       try {
@@ -196,7 +343,6 @@ export default {
       return jsonResponse({ ok: true, data: { reply } }, 200, corsHeaders);
     }
 
-    // POST /api/summarize
     if (url.pathname === "/api/summarize" && request.method === "POST") {
       let body: { sessionId?: string };
       try {
@@ -257,7 +403,6 @@ export default {
       return jsonResponse({ ok: true, data: { summary } }, 200, corsHeaders);
     }
 
-    // GET /api/export?sessionId=...
     if (url.pathname === "/api/export" && request.method === "GET") {
       const sessionId = url.searchParams.get("sessionId")?.trim() ?? "";
       if (sessionId.length < 8) {

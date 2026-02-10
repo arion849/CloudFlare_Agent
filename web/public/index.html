@@ -4,44 +4,713 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cloudflare AI Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 1rem; }
-    h1 { font-size: 1.25rem; margin-top: 0; }
-    #summary { background: #f0f4f8; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.9rem; }
-    #summary:empty { display: none; }
-    #transcript { border: 1px solid #ccc; border-radius: 6px; min-height: 200px; max-height: 360px; overflow-y: auto; padding: 0.75rem; margin-bottom: 0.75rem; }
-    .msg { margin-bottom: 0.5rem; }
-    .msg.user { color: #0a0; }
-    .msg.assistant { color: #06c; }
-    .msg .role { font-weight: 600; font-size: 0.8rem; }
-    #inputRow { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    #messageInput { flex: 1; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; }
-    #buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    button { padding: 0.5rem 0.75rem; border-radius: 4px; border: 1px solid #666; background: #fff; cursor: pointer; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    button.primary { background: #06c; color: #fff; border-color: #06c; }
-    #status { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+    :root {
+      --color-bg-primary: #0a0a0a;
+      --color-bg-secondary: #0f0f0f;
+      --color-bg-tertiary: #141414;
+      --color-bg-elevated: #1a1a1a;
+      --color-bg-input: #121212;
+      --color-grey-100: #f5f5f5;
+      --color-grey-400: #a3a3a3;
+      --color-grey-500: #737373;
+      --color-grey-600: #525252;
+      --color-grey-700: #404040;
+      --color-grey-800: #262626;
+      --color-success: #10b981;
+      --color-text-primary: #fafafa;
+      --color-text-secondary: #a3a3a3;
+      --color-text-tertiary: #737373;
+      --color-border-subtle: #262626;
+      --color-border-default: #404040;
+      --font-display: 'Manrope', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --space-xs: 0.25rem;
+      --space-sm: 0.5rem;
+      --space-md: 1rem;
+      --space-lg: 1.5rem;
+      --space-xl: 2rem;
+      --space-2xl: 3rem;
+      --radius-sm: 0.375rem;
+      --radius-md: 0.5rem;
+      --radius-lg: 0.75rem;
+      --radius-xl: 1rem;
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { background: #050506; font-family: var(--font-display); color: var(--color-text-primary); line-height: 1.6; height: 100vh; overflow: hidden; }
+
+    #bg {
+      position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; display: block;
+    }
+
+    .chat-container {
+      display: flex; flex-direction: column; height: 100vh; max-width: 1200px; margin: 0 auto;
+      background: rgba(15, 15, 15, 0.85); backdrop-filter: blur(20px);
+      border-left: 1px solid var(--color-border-subtle); border-right: 1px solid var(--color-border-subtle);
+      position: relative; z-index: 1;
+    }
+
+    /* Onboarding */
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .fade-in { animation: fade-in 0.6s ease-out forwards; }
+    .fade-in-delay-2 { opacity: 0; animation: fade-in 0.6s ease-out 1.4s forwards; }
+
+    #onboardingView {
+      position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: var(--color-bg-secondary); padding: var(--space-xl);
+    }
+    #onboardingView .get-started-text {
+      font-size: 1.5rem; font-weight: 600; color: var(--color-text-primary); text-align: center;
+    }
+    #onboardingView .name-step {
+      margin-top: var(--space-xl); width: 100%; max-width: 360px; display: flex; flex-direction: column; align-items: center; gap: var(--space-lg);
+    }
+    #onboardingView label {
+      font-size: 0.875rem; font-weight: 500; color: var(--color-text-secondary);
+    }
+    #onboardingView #nameInput {
+      width: 100%; background: var(--color-bg-input); border: 1px solid var(--color-border-default);
+      border-radius: var(--radius-lg); padding: var(--space-md) var(--space-lg); color: var(--color-text-primary);
+      font-family: var(--font-display); font-size: 1rem;
+    }
+    #onboardingView #nameInput:focus {
+      outline: none; border-color: rgba(255,255,255,0.3); box-shadow: 0 0 0 3px rgba(255,255,255,0.05);
+    }
+    #onboardingView #continueBtn {
+      width: 100%; padding: var(--space-md) var(--space-xl); background: linear-gradient(135deg, #2a2a2a, #3a3a3a);
+      border: 1px solid rgba(255,255,255,0.2); border-radius: var(--radius-lg); color: white;
+      font-family: var(--font-display); font-weight: 600; cursor: pointer; transition: all 0.2s ease;
+    }
+    #onboardingView #continueBtn:hover {
+      background: linear-gradient(135deg, #353535, #454545); box-shadow: var(--shadow-md);
+    }
+
+    .chat-view { display: none; flex-direction: column; flex: 1; min-height: 0; position: absolute; inset: 0; }
+    .chat-view.visible { display: flex; }
+
+    .chat-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--space-lg) var(--space-xl); background: var(--color-bg-tertiary);
+      border-bottom: 1px solid var(--color-border-subtle); backdrop-filter: blur(10px);
+    }
+    .chat-header::after {
+      content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2) 30%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0.2) 70%, transparent);
+      opacity: 0.5;
+    }
+    .header-title { display: flex; align-items: center; gap: var(--space-md); }
+    .bot-avatar {
+      width: 40px; height: 40px; background: linear-gradient(135deg, #2a2a2a, #3a3a3a);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: var(--radius-lg);
+      display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.125rem;
+      color: rgba(255,255,255,0.9); box-shadow: 0 0 20px rgba(255,255,255,0.1);
+    }
+    .header-title h1 {
+      font-size: 1.25rem; font-weight: 600;
+      background: linear-gradient(135deg, var(--color-text-primary), var(--color-grey-400));
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .header-status { display: flex; align-items: center; gap: var(--space-sm); font-size: 0.875rem; color: var(--color-text-secondary); }
+    .status-indicator {
+      width: 8px; height: 8px; background: var(--color-success); border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.9); } }
+
+    #summarySection { display: none; padding: var(--space-md) var(--space-xl); }
+    #summarySection.visible { display: block; }
+    #summary {
+      background: var(--color-bg-elevated); border: 1px solid var(--color-border-default);
+      border-radius: var(--radius-lg); padding: var(--space-md) var(--space-lg);
+      font-size: 0.875rem; color: var(--color-text-secondary); white-space: pre-wrap;
+    }
+
+    .messages-container {
+      flex: 1; overflow-y: auto; padding: var(--space-xl); display: flex; flex-direction: column; gap: var(--space-lg);
+      scroll-behavior: smooth;
+    }
+    .messages-container::-webkit-scrollbar { width: 8px; }
+    .messages-container::-webkit-scrollbar-track { background: var(--color-bg-secondary); }
+    .messages-container::-webkit-scrollbar-thumb { background: var(--color-grey-700); border-radius: var(--radius-lg); }
+    .messages-container::-webkit-scrollbar-thumb:hover { background: var(--color-grey-600); }
+
+    .message { display: flex; gap: var(--space-md); max-width: 85%; animation: messageSlideIn 0.3s ease-out; }
+    @keyframes messageSlideIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .message.user { align-self: flex-end; flex-direction: row-reverse; }
+    .message-avatar {
+      width: 36px; height: 36px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; font-weight: 500; font-size: 0.875rem;
+    }
+    .message.bot .message-avatar {
+      background: var(--color-bg-elevated); border: 1px solid var(--color-border-default); color: rgba(255,255,255,0.7);
+    }
+    .message.user .message-avatar {
+      background: linear-gradient(135deg, #2a2a2a, #3a3a3a); border: 1px solid rgba(255,255,255,0.1); color: white;
+    }
+    .message-content { display: flex; flex-direction: column; gap: var(--space-xs); flex: 1; }
+    .message-header {
+      display: flex; align-items: center; gap: var(--space-sm); font-size: 0.75rem;
+      color: var(--color-text-tertiary); font-weight: 500;
+    }
+    .message-bubble {
+      padding: var(--space-md) var(--space-lg); border-radius: var(--radius-lg); line-height: 1.6;
+    }
+    .message.bot .message-bubble {
+      background: var(--color-bg-elevated); border: 1px solid var(--color-border-default);
+      border-left: 3px solid rgba(255,255,255,0.3); color: var(--color-text-primary);
+    }
+    .message.user .message-bubble {
+      background: linear-gradient(135deg, #1a1a1a, #252525); border: 1px solid rgba(255,255,255,0.1);
+      color: white; box-shadow: var(--shadow-md);
+    }
+    .message-bubble pre { white-space: pre-wrap; word-break: break-word; }
+
+    .typing-indicator {
+      display: none; align-items: center; gap: var(--space-md); max-width: 85%; animation: messageSlideIn 0.3s ease-out;
+    }
+    .typing-indicator.visible { display: flex; }
+    .typing-dots {
+      display: flex; gap: var(--space-xs); padding: var(--space-md) var(--space-lg);
+      background: var(--color-bg-elevated); border: 1px solid var(--color-border-default); border-radius: var(--radius-lg);
+    }
+    .typing-dot {
+      width: 8px; height: 8px; background: var(--color-grey-500); border-radius: 50%;
+      animation: typing 1.4s ease-in-out infinite;
+    }
+    .typing-dot:nth-child(1) { animation-delay: 0s; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-10px); opacity: 1; } }
+
+    .input-container {
+      padding: var(--space-xl); background: var(--color-bg-tertiary); border-top: 1px solid var(--color-border-subtle);
+    }
+    .input-container::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2) 30%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0.2) 70%, transparent);
+      opacity: 0.5;
+    }
+    .input-wrapper { display: flex; gap: var(--space-md); align-items: flex-end; max-width: 100%; }
+    .input-field {
+      flex: 1; background: var(--color-bg-input); border: 1px solid var(--color-border-default);
+      border-radius: var(--radius-lg); padding: var(--space-md) var(--space-lg); color: var(--color-text-primary);
+      font-family: var(--font-display); font-size: 0.9375rem; line-height: 1.5; resize: none;
+      min-height: 52px; max-height: 200px; transition: all 0.2s ease;
+    }
+    .input-field:focus {
+      outline: none; border-color: rgba(255,255,255,0.3); box-shadow: 0 0 0 3px rgba(255,255,255,0.05);
+      background: var(--color-bg-secondary);
+    }
+    .input-field::placeholder { color: var(--color-text-tertiary); }
+    .send-button {
+      background: linear-gradient(135deg, #2a2a2a, #3a3a3a); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: var(--radius-lg); padding: var(--space-md) var(--space-xl); color: white;
+      font-family: var(--font-display); font-weight: 600; font-size: 0.9375rem; cursor: pointer;
+      transition: all 0.2s ease; height: 52px; display: flex; align-items: center; gap: var(--space-sm);
+      box-shadow: var(--shadow-md);
+    }
+    .send-button:hover {
+      transform: translateY(-2px); box-shadow: var(--shadow-lg), 0 0 20px rgba(255,255,255,0.2);
+      background: linear-gradient(135deg, #353535, #454545);
+    }
+    .send-button:active { transform: translateY(0); }
+    .send-button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .action-buttons {
+      display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-top: var(--space-md);
+    }
+    .action-btn {
+      background: var(--color-bg-elevated); border: 1px solid var(--color-border-default);
+      border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-lg); font-size: 0.875rem;
+      color: var(--color-text-secondary); cursor: pointer; transition: all 0.2s ease;
+      font-family: var(--font-display);
+    }
+    .action-btn:hover {
+      background: var(--color-bg-input); border-color: rgba(255,255,255,0.3);
+      color: var(--color-text-primary);
+    }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .attach-btn {
+      background: var(--color-bg-elevated); border: 1px solid var(--color-border-default);
+      border-radius: var(--radius-lg); padding: var(--space-md); color: var(--color-text-secondary);
+      cursor: pointer; transition: all 0.2s ease; flex-shrink: 0; height: 52px; display: flex; align-items: center; justify-content: center;
+    }
+    .attach-btn:hover:not(:disabled) {
+      background: var(--color-bg-input); border-color: rgba(255,255,255,0.3); color: var(--color-text-primary);
+    }
+    .attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .attachment-chips { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-top: var(--space-sm); min-height: 0; }
+    .attachment-chip {
+      display: inline-flex; align-items: center; gap: var(--space-sm);
+      background: var(--color-bg-elevated); border: 1px solid var(--color-border-default);
+      border-radius: var(--radius-md); padding: var(--space-xs) var(--space-md);
+      font-size: 0.8125rem; color: var(--color-text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .attachment-chip .chip-name { overflow: hidden; text-overflow: ellipsis; }
+    .attachment-chip .chip-remove { cursor: pointer; color: var(--color-grey-500); padding: 0 var(--space-xs); flex-shrink: 0; }
+    .attachment-chip .chip-remove:hover { color: var(--color-text-primary); }
+
+    .hidden { display: none !important; }
+    .toast-enter { animation: fade-in 0.2s ease-out forwards; }
+    #toastContainer {
+      position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 50;
+      width: 100%; max-width: 28rem; padding: 0 0.75rem; pointer-events: none;
+      display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+    }
+    .input-container { position: relative; }
   </style>
 </head>
 <body>
-  <h1>Cloudflare AI Chat</h1>
-  <div id="summary" aria-label="Session summary"></div>
-  <div id="transcript" role="log" aria-label="Chat transcript"></div>
-  <div id="inputRow">
-    <input type="text" id="messageInput" placeholder="Type a message..." maxlength="2000" aria-label="Message" />
-    <button type="button" id="sendBtn" class="primary">Send</button>
-  </div>
-  <div id="buttons">
-    <button type="button" id="summarizeBtn">Summarize</button>
-    <button type="button" id="exportBtn">Export</button>
-    <button type="button" id="newChatBtn">New Chat</button>
-  </div>
-  <div id="status"></div>
+  <canvas id="bg" aria-hidden="true"></canvas>
+
   <script>
-    // For local dev: Worker on :8787, frontend on another port. Override with API_BASE if needed.
-    window.API_BASE = typeof API_BASE !== 'undefined' ? API_BASE : (location.port === '8787' ? '' : (location.hostname === 'localhost' ? 'http://localhost:8787' : ''));
+    var BG_CONFIG = { fogSpeed: 0.06, fogScale: 2.0, pulseSpeed: 0.25, pulseIntensity: 0.025, grainIntensity: 0.02 };
+    (function () {
+      var canvas = document.getElementById('bg');
+      if (!canvas) return;
+      var gl = canvas.getContext('webgl', { alpha: false, powerPreference: 'low-power' });
+      if (!gl) return;
+      var VERT = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}';
+      var FRAG = [
+        'precision mediump float;',
+        'uniform float uTime; uniform vec2 uRes; uniform float uFogSpeed; uniform float uFogScale;',
+        'uniform float uPulseSpeed; uniform float uPulseIntensity; uniform float uGrain;',
+        'float hash(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}',
+        'float noise(vec3 p){',
+        '  vec3 i=floor(p);vec3 f=fract(p);',
+        '  float a=hash(i),b=hash(i+vec3(1,0,0)),c=hash(i+vec3(0,1,0)),d=hash(i+vec3(1,1,0));',
+        '  float e=hash(i+vec3(0,0,1)),f2=hash(i+vec3(1,0,1)),g=hash(i+vec3(0,1,1)),h=hash(i+vec3(1,1,1));',
+        '  f=f*f*(3.-2.*f);',
+        '  return mix(mix(mix(a,b,f.x),mix(c,d,f.x),f.y),mix(mix(e,f2,f.x),mix(g,h,f.x),f.y),f.z);',
+        '}',
+        'float fbm(vec3 p){float v=0.,a=0.5;float f=1.;for(int i=0;i<4;i++){v+=a*noise(p*f);f*=2.;a*=0.5;}return v;}',
+        'void main(){',
+        '  vec2 uv=gl_FragCoord.xy/uRes; vec3 p=vec3(uv*uFogScale,uTime*uFogSpeed);',
+        '  float fog=fbm(p); float pulse=sin(uTime*uPulseSpeed)*uPulseIntensity; float base=0.05;',
+        '  float grey=base+fog*0.03+pulse;',
+        '  float grain=(hash(vec3(uv*uRes,floor(uTime*60.)))*2.-1.)*uGrain; grey=clamp(grey+grain,0.,1.);',
+        '  gl_FragColor=vec4(grey,grey*0.98,grey*1.02,1.);',
+        '}'
+      ].join('');
+      var prog = (function () {
+        var vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, VERT); gl.compileShader(vs);
+        var fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, FRAG); gl.compileShader(fs);
+        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) return null;
+        var p = gl.createProgram(); gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+        return p;
+      })();
+      if (!prog) return;
+      var buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+      var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      function resize() {
+        var dpr = Math.min(window.devicePixelRatio || 1, 2);
+        var w = window.innerWidth; var h = window.innerHeight;
+        var pw = Math.round(w * dpr); var ph = Math.round(h * dpr);
+        if (w <= 768 || h <= 768) {
+          var maxSide = 1024;
+          if (pw > maxSide || ph > maxSide) { var scale = maxSide / Math.max(pw, ph); pw = Math.round(pw * scale); ph = Math.round(ph * scale); }
+        }
+        canvas.width = pw; canvas.height = ph; canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+        gl.viewport(0, 0, pw, ph);
+      }
+      function draw(t) {
+        gl.useProgram(prog);
+        var time = (t || 0) * 0.001;
+        gl.uniform1f(gl.getUniformLocation(prog, 'uTime'), reduceMotion ? 0 : time);
+        gl.uniform2f(gl.getUniformLocation(prog, 'uRes'), canvas.width, canvas.height);
+        gl.uniform1f(gl.getUniformLocation(prog, 'uFogSpeed'), BG_CONFIG.fogSpeed);
+        gl.uniform1f(gl.getUniformLocation(prog, 'uFogScale'), BG_CONFIG.fogScale);
+        gl.uniform1f(gl.getUniformLocation(prog, 'uPulseSpeed'), BG_CONFIG.pulseSpeed);
+        gl.uniform1f(gl.getUniformLocation(prog, 'uPulseIntensity'), BG_CONFIG.pulseIntensity);
+        gl.uniform1f(gl.getUniformLocation(prog, 'uGrain'), BG_CONFIG.grainIntensity);
+        var loc = gl.getAttribLocation(prog, 'a');
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        if (!reduceMotion) requestAnimationFrame(draw);
+      }
+      resize(); window.addEventListener('resize', resize);
+      if (reduceMotion) draw(0); else requestAnimationFrame(draw);
+    })();
   </script>
-  <script src="app.js"></script>
+
+  <div class="chat-container">
+    <div id="onboardingView">
+      <p class="get-started-text fade-in">Getting started</p>
+      <div class="name-step fade-in-delay-2">
+        <label for="nameInput">What's your name?</label>
+        <input type="text" id="nameInput" placeholder="Your name" maxlength="64" aria-label="Your name" />
+        <button type="button" id="continueBtn">Continue</button>
+      </div>
+    </div>
+
+    <div id="chatView" class="chat-view">
+      <header class="chat-header">
+        <div class="header-title">
+          <div class="bot-avatar">AI</div>
+          <h1>Cloudflare AI Chat</h1>
+        </div>
+        <div class="header-status">
+          <span class="status-indicator"></span>
+          <span>Online</span>
+        </div>
+      </header>
+
+      <section id="summarySection" class="summary-section">
+        <div id="summary" aria-label="Session summary"></div>
+      </section>
+
+      <div class="messages-container" id="transcript" role="log" aria-label="Chat transcript">
+        <div id="typingIndicator" class="typing-indicator">
+          <div class="message-avatar">AI</div>
+          <div class="typing-dots">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-container">
+        <div class="input-wrapper">
+          <input type="file" id="fileInput" accept=".txt,.md,.json,text/plain,text/markdown,application/json" class="hidden" aria-label="Attach file" />
+          <button type="button" class="attach-btn" id="attachBtn" aria-label="Attach file" title="Attach .txt, .md or .json (max 1 MB)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+          </button>
+          <textarea class="input-field" id="messageInput" placeholder="Type your message here... (Enter to send, Shift+Enter for new line)" rows="1" maxlength="2000" aria-label="Message input"></textarea>
+          <button type="button" class="send-button" id="sendBtn" aria-label="Send">
+            <span>Send</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+          </button>
+        </div>
+        <div id="attachmentChips" class="attachment-chips" aria-live="polite"></div>
+        <div class="action-buttons">
+          <button type="button" class="action-btn" id="summarizeBtn">Summarize</button>
+          <button type="button" class="action-btn" id="exportBtn">Export</button>
+          <button type="button" class="action-btn" id="newChatBtn">New Chat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastContainer"></div>
+
+  <script>
+    window.API_BASE = typeof API_BASE !== 'undefined' ? API_BASE : (location.port === '8787' ? '' : ('http://' + location.hostname + ':8787'));
+    const SESSION_KEY = 'chatSessionId';
+    const USER_NAME_KEY = 'chatUserName';
+
+    function getSessionId() {
+      var id = sessionStorage.getItem(SESSION_KEY);
+      if (!id || id.length < 8) {
+        id = crypto.randomUUID ? crypto.randomUUID() : 's-' + Date.now() + '-' + Math.random().toString(36).slice(2, 12);
+        sessionStorage.setItem(SESSION_KEY, id);
+      }
+      return id;
+    }
+    function setSessionId(id) { sessionStorage.setItem(SESSION_KEY, id); }
+    function apiUrl(path, query) {
+      var base = window.API_BASE || '';
+      var url = new URL(base + path, window.location.origin);
+      if (query) Object.keys(query).forEach(function(k) { url.searchParams.set(k, query[k]); });
+      return url.toString();
+    }
+    function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    var ALLOWED_EXT = ['.txt', '.md', '.json'];
+    var MAX_UPLOAD_BYTES = 1024 * 1024; // 1 MB
+    var currentAttachment = null; // { fileId, filename } or null
+
+    function getFileExtension(name) {
+      var i = name.lastIndexOf('.');
+      return i >= 0 ? name.slice(i).toLowerCase() : '';
+    }
+
+    async function post(path, body) {
+      var res = await fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      var text = await res.text();
+      var data;
+      try { data = JSON.parse(text); } catch (e) { throw new Error('Response was not JSON. Status: ' + res.status + ', preview: ' + (text || '').slice(0, 80)); }
+      if (!res.ok) throw new Error(data.error && data.error.message ? data.error.message : res.statusText);
+      return data;
+    }
+
+    function renderAttachmentChips() {
+      var container = document.getElementById('attachmentChips');
+      container.innerHTML = '';
+      if (currentAttachment) {
+        var chip = document.createElement('div');
+        chip.className = 'attachment-chip';
+        chip.innerHTML = '<span class="chip-name" title="' + escapeHtml(currentAttachment.filename) + '">' + escapeHtml(currentAttachment.filename) + '</span><span class="chip-remove" aria-label="Remove attachment">×</span>';
+        chip.querySelector('.chip-remove').addEventListener('click', function() {
+          currentAttachment = null;
+          renderAttachmentChips();
+        });
+        container.appendChild(chip);
+      }
+    }
+
+    function showTyping() {
+      document.getElementById('typingIndicator').classList.add('visible');
+      scrollToBottom();
+    }
+    function hideTyping() {
+      document.getElementById('typingIndicator').classList.remove('visible');
+    }
+    function scrollToBottom() {
+      var el = document.getElementById('transcript');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function addMessage(role, content) {
+      var transcript = document.getElementById('transcript');
+      var typingEl = document.getElementById('typingIndicator');
+      var isUser = role === 'user';
+      var timeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      var msg = document.createElement('div');
+      msg.className = 'message ' + (isUser ? 'user' : 'bot');
+      msg.innerHTML =
+        '<div class="message-avatar">' + (isUser ? 'U' : 'AI') + '</div>' +
+        '<div class="message-content">' +
+          '<div class="message-header"><span>' + (isUser ? 'You' : 'Assistant') + '</span><span>' + timeStr + '</span></div>' +
+          '<div class="message-bubble"><pre>' + escapeHtml(content) + '</pre></div>' +
+        '</div>';
+      transcript.insertBefore(msg, typingEl);
+      scrollToBottom();
+    }
+
+    function showToast(message, isError) {
+      var container = document.getElementById('toastContainer');
+      var el = document.createElement('div');
+      el.className = 'toast-enter px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium pointer-events-auto ' + (isError ? 'bg-red-700/90 text-white border border-red-600' : 'bg-zinc-600 text-zinc-100 border border-zinc-500');
+      el.textContent = message;
+      container.appendChild(el);
+      setTimeout(function() { el.remove(); }, 4000);
+    }
+
+    var transcriptEl = document.getElementById('transcript');
+    var summaryEl = document.getElementById('summary');
+    var summarySection = document.getElementById('summarySection');
+    var messageInput = document.getElementById('messageInput');
+    var sendBtn = document.getElementById('sendBtn');
+    var summarizeBtn = document.getElementById('summarizeBtn');
+    var exportBtn = document.getElementById('exportBtn');
+    var newChatBtn = document.getElementById('newChatBtn');
+    var attachBtn = document.getElementById('attachBtn');
+    var fileInput = document.getElementById('fileInput');
+
+    attachBtn.addEventListener('click', function() {
+      if (attachBtn.disabled) return;
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', async function() {
+      var file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      var ext = getFileExtension(file.name);
+      if (ALLOWED_EXT.indexOf(ext) === -1) {
+        showToast('Only .txt, .md, and .json files are allowed.', true);
+        return;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        showToast('File too large. Maximum size is 1 MB.', true);
+        return;
+      }
+      attachBtn.disabled = true;
+      var formData = new FormData();
+      formData.append('file', file);
+      try {
+        var res = await fetch(apiUrl('/api/upload'), { method: 'POST', body: formData });
+        var data = await res.json();
+        if (!res.ok) {
+          showToast(data.error && data.error.message ? data.error.message : 'Upload failed', true);
+          return;
+        }
+        currentAttachment = { fileId: data.data.fileId, filename: data.data.filename };
+        renderAttachmentChips();
+      } catch (e) {
+        showToast(e.message || 'Upload failed', true);
+      } finally {
+        attachBtn.disabled = false;
+      }
+    });
+
+    function setPending(pending) {
+      sendBtn.disabled = pending;
+      summarizeBtn.disabled = pending;
+      attachBtn.disabled = pending;
+    }
+
+    sendBtn.addEventListener('click', async function() {
+      var message = messageInput.value.trim();
+      if (!message) return;
+      var fileId = currentAttachment ? currentAttachment.fileId : undefined;
+      messageInput.value = '';
+      if (messageInput.style) messageInput.style.height = 'auto';
+      currentAttachment = null;
+      renderAttachmentChips();
+      addMessage('user', message);
+      showTyping();
+      setPending(true);
+      try {
+        var body = { sessionId: getSessionId(), message: message };
+        if (fileId) body.fileId = fileId;
+        var data = (await post('/api/chat', body)).data;
+        hideTyping();
+        addMessage('assistant', data.reply);
+      } catch (e) {
+        hideTyping();
+        showToast(e.message || 'Something went wrong', true);
+      } finally {
+        setPending(false);
+        messageInput.focus();
+      }
+    });
+
+    messageInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+    });
+    messageInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    });
+
+    summarizeBtn.addEventListener('click', async function() {
+      var userMessages = transcriptEl.querySelectorAll('.message.user');
+      if (userMessages.length === 0) {
+        showToast('Get a conversation going with the chatbot first—there\'s nothing to summarize.', false);
+        return;
+      }
+      setPending(true);
+      try {
+        var data = (await post('/api/summarize', { sessionId: getSessionId() })).data;
+        summaryEl.textContent = data.summary;
+        summarySection.classList.add('visible');
+        showToast('Summary updated.', false);
+      } catch (e) {
+        showToast(e.message || 'Summarize failed', true);
+      } finally {
+        setPending(false);
+      }
+    });
+
+    exportBtn.addEventListener('click', async function() {
+      try {
+        var url = apiUrl('/api/export', { sessionId: getSessionId() });
+        var res = await fetch(url);
+        var json = await res.json();
+        if (!res.ok) {
+          showToast(json.error && json.error.message ? json.error.message : 'Export failed', true);
+          return;
+        }
+        var data = json.data || json;
+        var lines = [];
+        lines.push('========================================');
+        lines.push('CHAT EXPORT');
+        lines.push('========================================');
+        lines.push('');
+        lines.push('Session: ' + (data.sessionId || '—'));
+        if (data.createdAt) lines.push('Started: ' + new Date(data.createdAt).toLocaleString());
+        if (data.updatedAt) lines.push('Last updated: ' + new Date(data.updatedAt).toLocaleString());
+        lines.push('');
+        lines.push('Summary:');
+        lines.push(data.summary ? '  ' + data.summary.replace(/\n/g, '\n  ') : '  (No summary yet.)');
+        lines.push('');
+        lines.push('----------------------------------------');
+        lines.push('CONVERSATION');
+        lines.push('----------------------------------------');
+        lines.push('');
+        var messages = data.messages || [];
+        for (var i = 0; i < messages.length; i++) {
+          var m = messages[i];
+          var role = m.role, content = (m.content || '').trim();
+          if (role === 'system') continue;
+          var label = role === 'user' ? 'You' : 'Assistant';
+          lines.push(label + ':');
+          lines.push(content ? '  ' + content.replace(/\n/g, '\n  ') : '  (no text)');
+          lines.push('');
+        }
+        var text = lines.join('\n');
+        var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'chat-export-' + (data.sessionId || getSessionId()).slice(0, 8) + '.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        showToast('Chat downloaded.', false);
+      } catch (e) {
+        showToast(e.message || 'Export failed', true);
+      }
+    });
+
+    newChatBtn.addEventListener('click', function() {
+      setSessionId('s-' + Date.now() + '-' + Math.random().toString(36).slice(2, 12));
+      summaryEl.textContent = '';
+      summarySection.classList.remove('visible');
+      var typingEl = document.getElementById('typingIndicator');
+      while (transcriptEl.firstChild !== typingEl) transcriptEl.removeChild(transcriptEl.firstChild);
+      showToast('New chat started.', false);
+    });
+
+    var onboardingView = document.getElementById('onboardingView');
+    var chatView = document.getElementById('chatView');
+    var nameInput = document.getElementById('nameInput');
+    var continueBtn = document.getElementById('continueBtn');
+
+    function showChat() {
+      onboardingView.classList.add('hidden');
+      chatView.classList.add('visible');
+      chatView.style.opacity = '0';
+      chatView.style.transition = 'opacity 0.4s ease-out';
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+          chatView.style.opacity = '1';
+          var name = (sessionStorage.getItem(USER_NAME_KEY) || 'there').trim() || 'there';
+          addMessage('assistant', 'Hello ' + name + '! How can I help you today?');
+          messageInput.focus();
+        });
+      });
+    }
+
+    if (sessionStorage.getItem(USER_NAME_KEY)) {
+      showChat();
+    }
+
+    continueBtn.addEventListener('click', function() {
+      var name = nameInput.value.trim();
+      if (!name) return;
+      sessionStorage.setItem(USER_NAME_KEY, name);
+      onboardingView.style.transition = 'opacity 0.35s ease-out';
+      onboardingView.style.opacity = '0';
+      setTimeout(function() { showChat(); }, 350);
+    });
+
+    nameInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); continueBtn.click(); }
+    });
+
+    getSessionId();
+    if (chatView.classList.contains('visible')) {
+      messageInput.focus();
+    } else {
+      nameInput.focus();
+    }
+  </script>
 </body>
 </html>

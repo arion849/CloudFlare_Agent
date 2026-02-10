@@ -1,7 +1,5 @@
 /**
- * ChatSessionDO – Durable Object per sessionId.
- * SQLite-backed: messages + meta tables.
- * Methods: init, appendMessage, getRecentMessages, setSummary, getSummary, exportSession.
+ * Durable Object per session. SQLite: messages + meta (summary, timestamps).
  */
 
 export interface Env {
@@ -97,7 +95,6 @@ export class ChatSessionDO implements DurableObject {
     this.init();
   }
 
-  /** Create tables if needed. */
   init(): void {
     const s = this.sql!;
     s.exec(`

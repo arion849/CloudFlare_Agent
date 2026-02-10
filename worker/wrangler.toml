@@ -15,6 +15,11 @@ new_sqlite_classes = ["ChatSessionDO"]
 [ai]
 binding = "AI"
 
+# R2 bucket for file uploads (text files only, max 1 MB)
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cloudflare-ai-chat-uploads"
+
 # Vars (non-secret)
 [vars]
 MESSAGE_MAX_LENGTH = "2000"

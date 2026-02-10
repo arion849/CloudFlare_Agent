@@ -1,1 +1,3 @@
-cloudflare_ai_assignment_spec.md
+node_modules/
+worker/.wrangler/
+.cursor/

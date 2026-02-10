@@ -1,172 +1,92 @@
 # Cloudflare AI Chat
 
-A web chat assistant on Cloudflare Pages + Workers that uses **Workers AI** (Llama 3.1 8B) for responses and **Durable Objects (SQLite)** for per-session memory, with a dedicated summarization workflow step. **$0 spend**: free tiers only.
+A chat application built on Cloudflare Workers, Durable Objects, Workers AI, and R2. The frontend is a static page (Cloudflare Pages or any static host) that talks to a Worker API. Sessions are persisted in a Durable Object with SQLite; optional file attachments are stored in R2.
 
-## What it is
+## Purpose
 
-- **Frontend**: Minimal chat UI (vanilla JS) on Cloudflare Pages. Session ID in `localStorage`; buttons: Send, Summarize, Export, New Chat.
-- **Backend**: Cloudflare Worker exposing REST API; orchestrates Durable Object + Workers AI. Input validation (message length cap 2,000 chars) and per-session rate limiting (10 req/min).
-- **Memory**: One Durable Object per `sessionId`; SQLite tables `messages` and `meta`; methods: init, appendMessage, getRecentMessages, setSummary, getSummary, exportSession.
-- **Workflow**: Distinct `POST /api/summarize` endpoint that summarizes the conversation and stores the summary in the DO.
+This project demonstrates a small but complete stack on Cloudflare: a Worker that coordinates Durable Objects (state), Workers AI (Llama 3.1 8B), and R2 (file storage), with a separate summarization step and a minimal web UI. It is built to run within free-tier limits.
 
 ## Architecture
 
-```
-                    ┌─────────────────────────────────────────────────────────┐
-                    │                    Cloudflare Pages                       │
-                    │  (static: index.html + app.js, sessionId in localStorage)│
-                    └───────────────────────────┬───────────────────────────────┘
-                                                │ fetch
-                                                ▼
-                    ┌─────────────────────────────────────────────────────────┐
-                    │                  Cloudflare Worker                        │
-                    │  • POST /api/chat   • POST /api/summarize   • GET /api/export │
-                    │  • Validation & rate limit                                 │
-                    │  • Orchestrates DO + Workers AI                            │
-                    └───────────┬─────────────────────────┬─────────────────────┘
-                                │                         │
-                ┌───────────────▼───────────────┐   ┌─────▼─────┐
-                │  Durable Object (per session)  │   │ Workers AI│
-                │  ChatSessionDO                 │   │ Llama 3.1 │
-                │  SQLite: messages, meta        │   │ 8B        │
-                │  appendMessage, getSummary,    │   └───────────┘
-                │  setSummary, exportSession     │
-                └───────────────────────────────┘
-```
+- **Frontend**: Single HTML page with inline CSS and JavaScript. Session ID in `sessionStorage`. No build step.
+- **Worker**: Handles `/api/chat`, `/api/summarize`, `/api/export`, `/api/upload`, and `/api/file`. Validates input, applies per-session rate limits, and forwards work to a Durable Object and Workers AI. File uploads go to R2; file content is never stored in the Durable Object.
+- **Durable Object (ChatSessionDO)**: One instance per session ID. SQLite tables for messages and meta (including a stored summary). Exposes internal RPC over `fetch` for the Worker to call.
+- **R2**: One bucket for uploaded files. Keys are `uploads/{fileId}-{sanitizedFilename}`. Only text files (`.txt`, `.md`, `.json`) up to 1 MB.
 
-**Data flow**
+## Features
 
-1. **Chat**: UI → `POST /api/chat` → Worker appends user message to DO → Worker loads summary + last N messages from DO → Worker calls Workers AI → Worker appends assistant message to DO → Worker returns reply to UI.
-2. **Summarize**: UI → `POST /api/summarize` → Worker loads last M messages from DO → Worker calls Workers AI with summarization prompt → Worker stores summary in DO → Worker returns summary to UI.
-3. **Export**: UI → `GET /api/export?sessionId=...` → Worker returns DO export JSON (sessionId, createdAt, updatedAt, summary, messages).
+- Send messages and receive replies from Llama 3.1 8B via Workers AI.
+- Per-session chat history and optional conversation summary stored in the Durable Object.
+- Export session data (summary + messages) as JSON.
+- Attach one text file per message (upload to R2); content is injected into the next chat request as context for the model only.
+- Rate limiting: 10 requests per 60 seconds per session (in-memory in the Worker).
+- CORS enabled for cross-origin frontend.
 
-## API Endpoints
+## Tech stack
 
-| Method | Path | Request / Query | Response |
-|--------|------|------------------|----------|
-| POST   | `/api/chat`      | Body: `{ sessionId, message }` | `{ ok: true, data: { reply } }` |
-| POST   | `/api/summarize` | Body: `{ sessionId }`          | `{ ok: true, data: { summary } }` |
-| GET    | `/api/export`    | Query: `sessionId=...`         | `{ ok: true, data: { sessionId, createdAt, updatedAt, summary, messages[] } }` |
+- **Runtime**: Cloudflare Workers.
+- **State**: Durable Objects with SQLite storage.
+- **Model**: Workers AI, `@cf/meta/llama-3.1-8b-instruct-fp8`.
+- **Storage**: R2 for file uploads.
+- **Frontend**: Vanilla JS, no framework. Session in `sessionStorage`.
 
-- **Errors**: `{ ok: false, error: { code, message } }` with appropriate HTTP status (400, 429, 500, 502).
-- **Validation**: `sessionId` required, min length 8; `message` required, trimmed, length 1–2000. Per-session rate limit: 10 requests per minute.
+## Run locally
 
-## Local development
+**Prerequisites:** Node.js 18+, Wrangler (`npm i -g wrangler` or use `npx`).
 
-### Prerequisites
-
-- Node.js 18+
-- [Wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/) (`npm i -g wrangler` or use `npx`)
-
-### 1. Run the Worker (API + DO + AI)
-
-```bash
-cd worker
-npm install
-npx wrangler dev
-```
-
-Worker runs at `http://localhost:8787` by default. SQLite-backed Durable Objects work in local dev.
-
-### 2. Run the frontend (Pages or static server)
-
-**Option A – Static server (same machine, CORS already allowed)**
-
-```bash
-cd web/public
-npx serve -l 3000
-```
-
-Then open `http://localhost:3000`. The UI calls `/api/...` by full URL: set the API base before loading the app. In the browser console (or by editing `index.html`), set:
-
-```js
-window.API_BASE = 'http://localhost:8787';
-```
-
-Then reload. Or serve `index.html` with a small change: add a script tag that sets `window.API_BASE = 'http://localhost:8787';` for local dev.
-
-**Option B – Inject API base in HTML**
-
-Add to `web/public/index.html` before `app.js`:
-
-```html
-<script>window.API_BASE = 'http://localhost:8787';</script>
-```
-
-Then open the file via `file://` or any static server; requests go to the local Worker.
-
-**Option C – Pages dev (if you use Wrangler for Pages)**
-
-```bash
-cd web/public
-npx wrangler pages dev . --port 3000
-```
-
-Set `API_BASE` to `http://localhost:8787` as above so the frontend hits the Worker.
-
-### 3. Optional: proxy so same origin
-
-To avoid CORS and keep `API_BASE` empty, put the Worker in front and serve static assets from the Worker (e.g. fetch from another origin or use a single Worker that routes `/api/*` to the API and `/*` to a static asset server). For the smallest setup, using `API_BASE` and CORS (already enabled on the Worker) is enough.
-
-## Deployment
-
-1. **Deploy the Worker**
+1. **Create the R2 bucket** (once):
 
    ```bash
    cd worker
-   npx wrangler deploy
+   npx wrangler r2 bucket create cloudflare-ai-chat-uploads
    ```
 
-   Note the Worker URL (e.g. `https://cloudflare-ai-chat.<your-subdomain>.workers.dev`).
+2. **Start the Worker:**
 
-2. **Deploy the frontend (Pages)**
+   ```bash
+   cd worker
+   npm install
+   npx wrangler dev
+   ```
 
-   - In Cloudflare Dashboard: **Pages** → **Create project** → **Upload assets**.
-   - Upload the contents of `web/public` (or connect a Git repo with `web/public` as the build output / root).
-   - Set an environment variable (e.g. `API_BASE`) to the Worker URL above if the frontend is on a different origin.
-   - In `index.html`, you can set `window.API_BASE` from a placeholder or leave it empty if you later route both through the same host.
+   API at `http://localhost:8787`. If the frontend is opened from another host (e.g. by IP), run `npx wrangler dev --ip 0.0.0.0` so the browser can reach it.
 
-   **Or with Wrangler:**
+3. **Serve the frontend:**
 
    ```bash
    cd web/public
-   npx wrangler pages project create cloudflare-ai-chat-web  # once
-   npx wrangler pages deploy . --project-name=cloudflare-ai-chat-web
+   npx serve -l 3000
    ```
 
-   Then set the Pages env var `API_BASE` (or equivalent) to your Worker URL and, if your build supports it, inject it into `window.API_BASE` in `index.html`.
+   Open `http://localhost:3000`. The page infers the API base from the current host and port 8787. To point at a different API, set `window.API_BASE` before the main script (e.g. `http://localhost:8787`).
 
-3. **Free tier**
+## Deploy
 
-   - Workers AI: use the free daily Neurons allocation (Llama 3.1 8B is used to stay within free usage).
-   - Durable Objects: SQLite-backed; free tier applies.
-   - Pages: free tier for static assets.
+1. **Worker:** From `worker`, run `npx wrangler deploy`. Ensure the R2 bucket `cloudflare-ai-chat-uploads` exists (create via dashboard or `wrangler r2 bucket create`).
+2. **Frontend:** Upload the contents of `web/public` to Cloudflare Pages (or any static host). If the frontend and Worker are on different origins, set `window.API_BASE` to the Worker URL (e.g. in a build step or a small inline script that reads an env var).
 
-## Repo structure
+## API summary
 
-```
-/worker
-  wrangler.toml          # DO binding (CHAT_SESSION), AI binding, vars
-  src/
-    index.ts             # Worker: routes, validation, rate limit, DO + AI calls
-    chatSessionDO.ts     # ChatSessionDO: SQLite messages + meta, all DO methods
-  package.json
-  tsconfig.json
-/web
-  public/
-    index.html           # Chat UI
-    app.js               # Vanilla JS: sessionId, Send / Summarize / Export / New Chat
-  package.json
-README.md
-```
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/chat` | Send a message; optional `fileId` to attach uploaded file content as context. Returns `{ ok, data: { reply } }`. |
+| POST | `/api/summarize` | Summarize recent messages and store summary in the session. |
+| GET | `/api/export` | Query `sessionId=...`; returns session metadata and messages. |
+| POST | `/api/upload` | Multipart form, field `file`. Allowed: `.txt`, `.md`, `.json`, max 1 MB. Returns `{ ok, data: { fileId, filename, contentType, size } }`. |
+| GET | `/api/file` | Query `fileId=...`; returns file content (capped at 100 KB) as JSON. |
 
-## Choices and limits
+Errors: `{ ok: false, error: { code, message } }` with appropriate status codes. Validation: `sessionId` length ≥ 8; message length 1–2000; rate limit 10 req/60s per session.
 
-- **Model**: `@cf/meta/llama-3.1-8b-instruct-fp8` (free-tier friendly). This implementation uses the available free-tier Llama 3.1 8B.
-- **Rate limiting**: In-memory map of request timestamps per `sessionId`; 10 requests per 60 seconds per session. Resets when the Worker instance is recycled.
-- **Message cap**: 2,000 characters (configurable via `MESSAGE_MAX_LENGTH` in `wrangler.toml`).
-- **History**: Last 10 messages for chat context; last 50 for summarization (configurable via env vars).
+## Limits and scope
 
-## License
+- **Message length:** 2,000 characters (configurable via `MESSAGE_MAX_LENGTH` in `wrangler.toml`).
+- **Chat context:** Last 10 messages; summarization uses last 50 (configurable).
+- **Uploads:** Text files only, 1 MB max. Stored in R2; only the current attachment is sent with the next message (no long-term attachment list in the DO).
+- **Rate limit:** In-memory; resets when the Worker instance is recycled.
+- **No auth:** Session ID is client-chosen; suitable for demos and trusted use.
 
-Optional; not included by default.
+## Possible improvements
+
+- Add authentication or session binding so session IDs cannot be guessed.
+- Persist rate-limit state (e.g. in the Durable Object or a KV namespace) so limits survive Worker restarts.
+- Optional: allow multiple attachments per message or a small list of recent file IDs in the session.
